@@ -18,3 +18,10 @@ docs/
 .env
 .env.*
 !.env.example
+
+# web build artifacts and deps
+web/node_modules/
+web/dist/
+node_modules/
+dist/
+*.raw
