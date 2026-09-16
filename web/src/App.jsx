@@ -327,28 +327,50 @@ export default function App() {
       </div>
 
       <div className="card">
-        <div className="row">
-          <div className="stat">
-            <div className="k">Price</div>
-            <div className="v">{formatEther(price)}</div>
-            <div className="muted">WSETH per RLO</div>
+        {phase === 2 ? (
+          <div className="row">
+            <div className="stat">
+              <div className="k">Pool price</div>
+              <div className="v">{fmtUnits(gradRate)}</div>
+              <div className="muted">WSETH per RLO · live</div>
+            </div>
+            <div className="stat">
+              <div className="k">Pool RLO</div>
+              <div className="v">{fmtRLO(poolReserves[0])}</div>
+              <div className="muted">liquidity</div>
+            </div>
+            <div className="stat">
+              <div className="k">Pool WSETH</div>
+              <div className="v">{fmtUnits(poolReserves[1])}</div>
+              <div className="muted">liquidity</div>
+            </div>
           </div>
-          <div className="stat">
-            <div className="k">Curve quote</div>
-            <div className="v">{fmtUnits(reserves[1])}</div>
-            <div className="muted">of {fmtUnits(target)} target</div>
+        ) : (
+          <div className="row">
+            <div className="stat">
+              <div className="k">Price</div>
+              <div className="v">{fmtUnits(price)}</div>
+              <div className="muted">WSETH per RLO</div>
+            </div>
+            <div className="stat">
+              <div className="k">Curve quote</div>
+              <div className="v">{fmtUnits(reserves[1])}</div>
+              <div className="muted">of {fmtUnits(target)} target</div>
+            </div>
+            <div className="stat">
+              <div className="k">Curve tokens</div>
+              <div className="v">{fmtRLO(reserves[0])}</div>
+              <div className="muted">RLO on the book</div>
+            </div>
           </div>
-          <div className="stat">
-            <div className="k">Curve tokens</div>
-            <div className="v">{fmtRLO(reserves[0])}</div>
-            <div className="muted">RLO on the book</div>
+        )}
+        {phase !== 2 && (
+          <div className="chart">
+            <div className="fill" style={{width: `${Math.min(100, progress)}%`}} />
+            <span className="cap">{progress.toFixed(2)}% to graduation</span>
+            <span className="progress-label">fee {feeBps / 100}% · fees {fmtUnits(fees)}</span>
           </div>
-        </div>
-        <div className="chart">
-          <div className="fill" style={{width: `${Math.min(100, progress)}%`}} />
-          <span className="cap">{progress.toFixed(2)}% to graduation</span>
-          <span className="progress-label">fee {feeBps / 100}% · fees {fmtUnits(fees)}</span>
-        </div>
+        )}
       </div>
 
       {phase === 2 ? (
