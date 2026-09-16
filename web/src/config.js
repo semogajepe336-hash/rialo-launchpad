@@ -17,3 +17,12 @@ export const ABIS = {
 
 export const CHAIN_NAME = "Sepolia";
 export const SEPOLIA_CHAIN_ID = 11155111;
+
+// Public fallback RPCs used for read-only state. The wallet still uses its own
+// injected provider for sends; this list is only for the read panel.
+export const FALLBACK_RPCS = [
+  "https://ethereum-sepolia-rpc.publicnode.com",
+  "https://1rpc.io/sepolia",
+  "https://rpc.sepolia.org",
+  "https://sepolia.gateway.tenderly.co",
+];

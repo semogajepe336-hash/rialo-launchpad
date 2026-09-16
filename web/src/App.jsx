@@ -1,8 +1,18 @@
 import {useCallback, useEffect, useState} from "react";
-import {BrowserProvider, Contract, formatEther, parseEther, ZeroAddress} from "ethers";
-import {ADDRESSES, ABIS, SEPOLIA_CHAIN_ID, CHAIN_NAME} from "./config.js";
+import {BrowserProvider, Contract, formatEther, parseEther, ZeroAddress, ethers} from "ethers";
+import {ADDRESSES, ABIS, SEPOLIA_CHAIN_ID, CHAIN_NAME, FALLBACK_RPCS} from "./config.js";
 
 const PHASE = {0: "Seeding", 1: "Curve", 2: "Live", 3: "Paused"};
+
+// The token has 18 decimals, so 1 whole token = 1e18 raw. Show whole units.
+function fmtRLO(v) {
+  return (Number(v) / 1e18).toLocaleString("en-US", {maximumFractionDigits: 2});
+}
+
+function fmtUnits(v, decimals = 18) {
+  if (decimals === 0) return Number(v).toLocaleString("en-US");
+  return (Number(v) / 10 ** decimals).toLocaleString("en-US", {maximumFractionDigits: 4});
+}
 
 function short(a) {
   if (!a || a === ZeroAddress) return "—";
@@ -18,6 +28,8 @@ export default function App() {
   const [launch, setLaunch] = useState(null);
   const [token, setToken] = useState(null);
   const [quote, setQuote] = useState(null);
+  // read-only contracts backed by public RPCs so the panel loads even before connecting
+  const [roLaunch, setRoLaunch] = useState(null);
 
   const [phase, setPhase] = useState(null);
   const [price, setPrice] = useState(0n);
@@ -86,21 +98,17 @@ export default function App() {
   }, [signer]);
 
   const refresh = useCallback(async () => {
-    if (!launch || !token || !quote || !account) return;
+    const l = launch || roLaunch;
+    if (!l) return;
     try {
-      const [p, r, t, f, fb, ph, pa, gr, bq, bt, al] = await Promise.all([
-        launch.price(),
-        launch.getReserves(),
-        launch.targetQuote(),
-        launch.feesAccrued(),
-        launch.feeBps(),
-        launch.phase(),
-        launch.pool(),
-        launch.graduationRate(),
-        quote.balanceOf(account),
-        token.balanceOf(account),
-        quote.allowance(account, ADDRESSES.fairlaunch),
-      ]);
+      const p = await l.price();
+      const r = await l.getReserves();
+      const t = await l.targetQuote();
+      const f = await l.feesAccrued();
+      const fb = await l.feeBps();
+      const ph = await l.phase();
+      const pa = await l.pool();
+      const gr = await l.graduationRate();
       setPrice(p);
       setReserves(r);
       setTarget(t);
@@ -109,14 +117,21 @@ export default function App() {
       setPhase(Number(ph));
       setPoolAddr(pa);
       setGradRate(gr);
-      setBalQuote(bq);
-      setBalToken(bt);
-      setAllowance(al);
+      if (token && quote && account) {
+        const [bq, bt, al] = await Promise.all([
+          quote.balanceOf(account),
+          token.balanceOf(account),
+          quote.allowance(account, ADDRESSES.fairlaunch),
+        ]);
+        setBalQuote(bq);
+        setBalToken(bt);
+        setAllowance(al);
+      }
       setErr("");
     } catch (e) {
       setErr(String(e.shortMessage || e.message || e));
     }
-  }, [launch, token, quote, account]);
+  }, [launch, roLaunch, token, quote, account]);
 
   useEffect(() => {
     refresh();
@@ -125,16 +140,45 @@ export default function App() {
     return () => clearInterval(iv);
   }, [refresh, launch]);
 
-  // pool state after graduation
+  // read-only state from public RPCs — no wallet needed
   useEffect(() => {
-    if (!poolAddr || poolAddr === ZeroAddress || !signer) {
+    let cancelled = false;
+    const tryRpc = async (url) => {
+      try {
+        const p = new ethers.JsonRpcProvider(url, SEPOLIA_CHAIN_ID, {staticNetwork: true});
+        const l = new ethers.Contract(ADDRESSES.fairlaunch, ABIS.fairlaunch, p);
+        const ph = await l.phase();
+        if (!cancelled) setRoLaunch(l);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    (async () => {
+      for (const url of FALLBACK_RPCS) {
+        if (await tryRpc(url)) return;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useEffect(() => {
+    if (!poolAddr || poolAddr === ZeroAddress) {
       setPool(null);
       setPoolReserves([0n, 0n]);
       return;
     }
-    const p = new Contract(poolAddr, ABIS.tokenPool, signer);
-    p.getReserves().then(setPoolReserves).catch(() => {});
+    // read via the wallet signer if connected, else a public RPC
+    let p;
+    if (signer) {
+      p = new Contract(poolAddr, ABIS.tokenPool, signer);
+    } else {
+      const rpc = new ethers.JsonRpcProvider(FALLBACK_RPCS[0], SEPOLIA_CHAIN_ID, {staticNetwork: true});
+      p = new Contract(poolAddr, ABIS.tokenPool, rpc);
+    }
     setPool(p);
+    p.getReserves().then(setPoolReserves).catch(() => setPoolReserves([0n, 0n]));
   }, [poolAddr, signer]);
 
   // previews
@@ -291,19 +335,19 @@ export default function App() {
           </div>
           <div className="stat">
             <div className="k">Curve quote</div>
-            <div className="v">{formatEther(reserves[1])}</div>
-            <div className="muted">of {formatEther(target)} target</div>
+            <div className="v">{fmtUnits(reserves[1])}</div>
+            <div className="muted">of {fmtUnits(target)} target</div>
           </div>
           <div className="stat">
             <div className="k">Curve tokens</div>
-            <div className="v">{formatEther(reserves[0])}</div>
+            <div className="v">{fmtRLO(reserves[0])}</div>
             <div className="muted">RLO on the book</div>
           </div>
         </div>
         <div className="chart">
           <div className="fill" style={{width: `${Math.min(100, progress)}%`}} />
           <span className="cap">{progress.toFixed(2)}% to graduation</span>
-          <span className="progress-label">fee {feeBps / 100}% · fees {formatEther(fees)}</span>
+          <span className="progress-label">fee {feeBps / 100}% · fees {fmtUnits(fees)}</span>
         </div>
       </div>
 
@@ -311,16 +355,16 @@ export default function App() {
         <div className="card">
           <h3>Pool is live</h3>
           <p className="muted">
-            Graduated at rate {formatEther(gradRate)} WSETH/RLO. Trade in the pool:
+            Graduated at rate {fmtUnits(gradRate)} WSETH/RLO. Trade in the pool:
           </p>
           <div className="row">
             <div className="stat">
               <div className="k">Pool RLO</div>
-              <div className="v">{formatEther(poolReserves[0])}</div>
+              <div className="v">{fmtRLO(poolReserves[0])}</div>
             </div>
             <div className="stat">
               <div className="k">Pool WSETH</div>
-              <div className="v">{formatEther(poolReserves[1])}</div>
+              <div className="v">{fmtUnits(poolReserves[1])}</div>
             </div>
             <div className="stat">
               <div className="k">Pool address</div>
@@ -351,7 +395,7 @@ export default function App() {
               />
             </div>
             <div className="muted" style={{marginBottom: 12}}>
-              ≈ {formatEther(previewOut)} RLO out · balance {formatEther(balQuote)} WSETH
+              ≈ {fmtRLO(previewOut)} RLO out · balance {fmtUnits(balQuote)} WSETH
             </div>
             <button className="btn" disabled={busy || !account} onClick={doBuy}>
               {busy ? "…" : "Buy RLO"}
@@ -373,7 +417,7 @@ export default function App() {
               />
             </div>
             <div className="muted" style={{marginBottom: 12}}>
-              ≈ {formatEther(previewIn)} WSETH out · balance {formatEther(balToken)} RLO
+              ≈ {fmtUnits(previewIn)} WSETH out · balance {fmtRLO(balToken)} RLO
             </div>
             <div className="admin">
               <button className="btn ghost" disabled={busy || !account} onClick={doApproveSell}>
